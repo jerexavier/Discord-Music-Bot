@@ -46,8 +46,8 @@ All state (queue, current song, idle timer) is stored per server id, so the bot 
 **3. Run the bot**
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/remy-bot.git
-cd remy-bot
+git clone https://github.com/YOUR-USERNAME/Discord-Music-Bot.git
+cd Discord-Music-Bot
 python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env                                   # then paste your token into .env
