@@ -1,22 +1,24 @@
-"""RemyBot: a Discord music bot that joins a voice channel and streams audio from YouTube.
+"""
+Title: RemyBot, a Discord music bot that joins a voice channel and streams audio from YouTube.
 
 Author: Jeremy Xavier Francisco
 
 How it works:
-    A user types `!play <song name or link>` in a text channel. The bot looks the
+    A user types `!play <song name or YouTube link>` in a text channel. The bot looks the
     song up with yt-dlp (in a background thread so that the bot stays responsive),
-    gets a direct audio stream URL, gives it to FFmpeg, and pipes the decoded
+    gets a direct audio stream URL, gives it to FFmpeg, and inputs the decoded
     audio into the voice channel. Each Discord server has its own
-    queue, so songs queued in one server never leak into another. When the
-    queue runs dry the bot waits a few minutes, then leaves on its own.
+    queue, so songs queued in one server never overlap with one another. When the
+    queue runs empty the bot waits a few minutes, then leaves on its own.
 
-Run it:
+To run:
     cp .env.example .env        # then paste your bot token into .env
     pip install -r requirements.txt
     python bot.py
 
 Requires FFmpeg on your PATH (https://ffmpeg.org/download.html).
 """
+
 import asyncio
 import os
 from datetime import datetime
@@ -27,21 +29,21 @@ import yt_dlp
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# ---------------------------------------------------------------------------
-# Configuration
-#
 # load_dotenv() reads .env from the current directory into os.environ.
-# ---------------------------------------------------------------------------
 load_dotenv()
 
+# TOKEN saves the token given
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     raise SystemExit("DISCORD_TOKEN is not set. Copy .env.example to .env and add your bot token.")
 
+# COMMAND_PREFIX sets the command prefix
 COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!")
+
+#IDLE_TIMEOUT_SECONDS set timeout timer to x seconds
 IDLE_TIMEOUT_SECONDS = int(os.getenv("IDLE_TIMEOUT_SECONDS", "180"))
 
-# yt-dlp options: audio only, no playlists, treat bare text as a YouTube search.
+# yt-dlp options: audio only, no playlists, treat text as a YouTube search.
 YDL_OPTIONS = {
     "format": "bestaudio/best",
     "noplaylist": True,
@@ -57,16 +59,13 @@ FFMPEG_OPTIONS = {
     "options": "-vn",
 }
 
-# message_content is a "privileged intent": it must also be switched on in the
-# Discord Developer Portal or the bot will never see the text of commands.
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 
 # ---------------------------------------------------------------------------
-# Per-server state. Everything is keyed by server id so multiple servers can use
-# the bot at once without stepping on each other.
+# Per-server states
 # ---------------------------------------------------------------------------
 song_queues: dict[int, list[tuple[str, str]]] = {}   # server id -> [(stream_url, title), ...]
 now_playing: dict[int, str | None] = {}              # server id -> title currently playing
@@ -77,7 +76,7 @@ idle_tasks: dict[int, asyncio.Task] = {}             # server id -> pending auto
 # Helpers
 # ---------------------------------------------------------------------------
 def search_youtube(query: str) -> tuple[str, str]:
-    """Resolve a search string or URL to (direct_stream_url, title)."""
+    """Send a search string or URL to (direct_stream_url, title)."""
     with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
         info = ydl.extract_info(query, download=False)
         entry = info["entries"][0] if info.get("entries") else info
@@ -95,21 +94,21 @@ def search_youtube(query: str) -> tuple[str, str]:
 
 
 def cancel_idle_timer(guild_id: int) -> None:
-    """Stop a pending auto-disconnect, e.g. because a new song started."""
+    """Stop an auto-disconnect"""
     task = idle_tasks.pop(guild_id, None)
     if task:
         task.cancel()
 
 
 def reset_guild_state(guild_id: int) -> None:
-    """Forget the queue, the current song, and any idle timer for one server."""
+    """Clears the queue, the current song, and any idle timer for a server."""
     song_queues[guild_id] = []
     now_playing[guild_id] = None
     cancel_idle_timer(guild_id)
 
 
 async def schedule_idle_disconnect(ctx: commands.Context) -> None:
-    """Leave the voice channel if nothing has played for IDLE_TIMEOUT_SECONDS."""
+    """Leave the voice channel if nothing has played for timeout time."""
     cancel_idle_timer(ctx.guild.id)
     await ctx.send(
         f" Queue is empty. I'll leave in {IDLE_TIMEOUT_SECONDS // 60} minutes if nothing plays."
@@ -129,7 +128,7 @@ async def schedule_idle_disconnect(ctx: commands.Context) -> None:
 
 
 async def play_next(ctx: commands.Context) -> None:
-    """ Pop the next song off this server's queue and start playing the next song."""
+    """ Pop the next song off this server's queue and start the next song."""
     queue = song_queues.get(ctx.guild.id, [])
     if not queue:
         now_playing[ctx.guild.id] = None
@@ -144,7 +143,7 @@ async def play_next(ctx: commands.Context) -> None:
 
     def after_playing(error: Exception | None):
         if error:
-            print(f"Playback error in guild {ctx.guild.id}: {error}")
+            print(f"Playback error in server {ctx.guild.id}: {error}")
         asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop)
 
     ctx.voice_client.play(source, after=after_playing)
@@ -161,7 +160,7 @@ async def on_ready():
 
 @bot.event
 async def on_command_error(ctx: commands.Context, error: commands.CommandError):
-    """Turn common mistakes into a friendly message instead of a stack trace."""
+    """Turn mistakes into a message instead of a stack trace."""
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f"Usage: `{COMMAND_PREFIX}{ctx.command.name} {ctx.command.signature}`")
     elif isinstance(error, commands.CommandNotFound):
@@ -183,7 +182,7 @@ async def join(ctx: commands.Context):
     if ctx.voice_client is not None:
         return await ctx.send("I'm already connected.")
     await ctx.author.voice.channel.connect()
-    await ctx.send(f"🔊 Joined **{ctx.author.voice.channel.name}**")
+    await ctx.send(f"Joined **{ctx.author.voice.channel.name}**")
 
 
 @bot.command(aliases=["leave", "disconnect"], help="Leave the voice channel and clear the queue.")
@@ -205,7 +204,7 @@ async def play(ctx: commands.Context, *, search: str):
     if ctx.voice_client is None:
         await ctx.author.voice.channel.connect()
 
-    async with ctx.typing():   # shows "RemyBot is typing..." while yt-dlp works
+    async with ctx.typing():   # shows "MusicBot is typing..." while yt-dlp works
         try:
             url, title = await asyncio.to_thread(search_youtube, search)
         except Exception as exc:
@@ -223,7 +222,7 @@ async def play(ctx: commands.Context, *, search: str):
 async def pause(ctx: commands.Context):
     if ctx.voice_client and ctx.voice_client.is_playing():
         ctx.voice_client.pause()
-        await ctx.send("⏸Paused.")
+        await ctx.send("Paused.")
     else:
         await ctx.send("Nothing is playing.")
 
@@ -232,7 +231,7 @@ async def pause(ctx: commands.Context):
 async def resume(ctx: commands.Context):
     if ctx.voice_client and ctx.voice_client.is_paused():
         ctx.voice_client.resume()
-        await ctx.send("▶Resumed.")
+        await ctx.send("Resumed.")
     else:
         await ctx.send("Nothing is paused.")
 
@@ -264,7 +263,7 @@ async def show_queue(ctx: commands.Context):
 @bot.command(aliases=["np"], help="Show what's playing right now.")
 async def nowplaying(ctx: commands.Context):
     title = now_playing.get(ctx.guild.id)
-    await ctx.send(f"Now playing: **{title}**" if title else "📭 Nothing is playing.")
+    await ctx.send(f"Now playing: **{title}**" if title else "Nothing is playing.")
 
 
 @bot.command(help="Clear the queue (keeps the current song playing).")
@@ -276,7 +275,7 @@ async def clear(ctx: commands.Context):
 @bot.command(hidden=True)
 @commands.is_owner()
 async def shutdown(ctx: commands.Context):
-    await ctx.send("👋 Shutting down.")
+    await ctx.send("Shutting down.")
     await bot.close()
 
 
